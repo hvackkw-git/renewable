@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>경제성 검토 MVP (ZEB5)</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+  <header class="topbar">
+    <div>
+      <h1>경제성 검토 (정적 웹 MVP)</h1>
+      <p class="sub">투자비/편익 입력 → NPV/IRR/회수기간 즉시 산출</p>
+    </div>
+    <div class="btnrow">
+      <button id="btnReset" class="btn">기본값</button>
+      <button id="btnSave" class="btn">시나리오 저장</button>
+      <button id="btnLoad" class="btn">시나리오 불러오기</button>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- INPUT -->
+    <section class="card">
+      <h2>입력(노란색 변수)</h2>
+
+      <div class="formgrid">
+        <div class="field">
+          <label>지열 투자비 (백만원)</label>
+          <input id="capGeo" type="number" step="1" />
+        </div>
+        <div class="field">
+          <label>개별냉난방 투자비 (백만원)</label>
+          <input id="capInd" type="number" step="1" />
+        </div>
+        <div class="field">
+          <label>태양광 투자비 (백만원)</label>
+          <input id="capPv" type="number" step="1" />
+        </div>
+
+        <div class="field">
+          <label>취득세 경감 (백만원, 일회성)</label>
+          <input id="benefitTax" type="number" step="1" />
+        </div>
+        <div class="field">
+          <label>에너지비용 절감 (백만원/년)</label>
+          <input id="benefitEnergy" type="number" step="1" />
+        </div>
+
+        <div class="field">
+          <label>할인율 (%, 예: 4.5)</label>
+          <input id="discountRate" type="number" step="0.01" />
+        </div>
+
+        <div class="field">
+          <label>분석기간 (년)</label>
+          <input id="years" type="number" step="1" min="1" max="60" />
+        </div>
+
+        <div class="field">
+          <label>기준연도</label>
+          <input id="baseYear" type="number" step="1" />
+        </div>
+      </div>
+
+      <div class="btnrow mt">
+        <button id="btnApply" class="btn primary">계산</button>
+        <button id="btnCapex10" class="btn">투자비 +10%</button>
+        <button id="btnEnergyDown20" class="btn">절감 -20%</button>
+        <button id="btnTaxZero" class="btn">취득세 0</button>
+      </div>
+
+      <p class="hint">
+        단위: 백만원. (IRR/NPV는 단순화된 현금흐름 모델 기반)
+      </p>
+    </section>
+
+    <!-- OUTPUT -->
+    <section class="card">
+      <h2>결과</h2>
+
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kpiLabel">NPV (백만원)</div>
+          <div id="kpiNpv" class="kpiVal">-</div>
+        </div>
+        <div class="kpi">
+          <div class="kpiLabel">IRR (%)</div>
+          <div id="kpiIrr" class="kpiVal">-</div>
+        </div>
+        <div class="kpi">
+          <div class="kpiLabel">회수기간 (년)</div>
+          <div id="kpiPayback" class="kpiVal">-</div>
+        </div>
+        <div class="kpi">
+          <div class="kpiLabel">할인율 (%)</div>
+          <div id="kpiRate" class="kpiVal">-</div>
+        </div>
+      </div>
+
+      <div class="charts">
+        <div class="chartbox">
+          <h3>연도별 현금흐름 (CF)</h3>
+          <canvas id="chartCf"></canvas>
+        </div>
+        <div class="chartbox">
+          <h3>누적 현금흐름 (Cumulative)</h3>
+          <canvas id="chartCum"></canvas>
+        </div>
+      </div>
+
+      <h3 class="mt">현금흐름 표</h3>
+      <div class="tablewrap">
+        <table id="cfTable">
+          <thead>
+            <tr>
+              <th>연도</th>
+              <th>CF</th>
+              <th>누적</th>
+              <th>할인CF</th>
+              <th>할인누적</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>GitHub Pages 정적 웹 / Chart.js 사용</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
