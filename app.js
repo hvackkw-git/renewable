@@ -1,139 +1,342 @@
-<!-- index.html (FULL REPLACE) -->
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>경제성 검토 MVP (ZEB5)</title>
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-</head>
+// app.js (FULL REPLACE)
 
-<body>
-  <header class="topbar">
-    <div>
-      <h1>경제성 검토 (정적 웹 MVP)</h1>
-      <p class="sub">투자비/편익 입력 → NPV/IRR/회수기간 즉시 산출</p>
-    </div>
-    <div class="btnrow">
-      <button id="btnReset" class="btn">기본값</button>
-      <button id="btnSave" class="btn">시나리오 저장</button>
-      <button id="btnLoad" class="btn">시나리오 불러오기</button>
-    </div>
-  </header>
+// ===== Utils =====
+const fmt = (x, d=0) => {
+  if (!isFinite(x)) return "-";
+  return Number(x).toLocaleString("ko-KR", { maximumFractionDigits: d });
+};
 
-  <main class="grid">
-    <!-- INPUT -->
-    <section class="card">
-      <h2>입력(노란색 변수)</h2>
+function npv(rate, cashflows){
+  // cashflows[0] is at t=0
+  let s = 0;
+  for (let t=0; t<cashflows.length; t++){
+    s += cashflows[t] / Math.pow(1 + rate, t);
+  }
+  return s;
+}
 
-      <div class="formgrid">
-        <div class="field">
-          <label>지열 투자비 (백만원)</label>
-          <input id="capGeo" type="number" step="1" />
-        </div>
-        <div class="field">
-          <label>개별냉난방 투자비 (백만원)</label>
-          <input id="capInd" type="number" step="1" />
-        </div>
-        <div class="field">
-          <label>태양광 투자비 (백만원)</label>
-          <input id="capPv" type="number" step="1" />
-        </div>
+function irr(cashflows){
+  // Robust bisection on [-0.9999, 10] (i.e., -99.99% to 1000%)
+  // Return NaN if no sign change.
+  const f = (r) => npv(r, cashflows);
 
-        <div class="field">
-          <label>취득세 경감 (백만원, 일회성)</label>
-          <input id="benefitTax" type="number" step="1" />
-        </div>
-        <div class="field">
-          <label>에너지비용 절감 (백만원/년)</label>
-          <input id="benefitEnergy" type="number" step="1" />
-        </div>
+  let lo = -0.9999;
+  let hi = 10.0;
+  let flo = f(lo);
+  let fhi = f(hi);
 
-        <div class="field">
-          <label>할인율 (%, 예: 4.5)</label>
-          <input id="discountRate" type="number" step="0.01" />
-        </div>
+  if (!isFinite(flo) || !isFinite(fhi)) return NaN;
+  if (flo === 0) return lo;
+  if (fhi === 0) return hi;
 
-        <div class="field">
-          <label>분석기간 (년)</label>
-          <input id="years" type="number" step="1" min="1" max="60" />
-        </div>
+  // Need sign change
+  if (flo * fhi > 0){
+    // Try expanding hi a bit
+    hi = 50.0;
+    fhi = f(hi);
+    if (!isFinite(fhi) || flo * fhi > 0) return NaN;
+  }
 
-        <div class="field">
-          <label>기준연도</label>
-          <input id="baseYear" type="number" step="1" />
-        </div>
-      </div>
+  for (let i=0; i<120; i++){
+    const mid = (lo + hi) / 2;
+    const fmid = f(mid);
+    if (!isFinite(fmid)) return NaN;
+    if (Math.abs(fmid) < 1e-8) return mid;
+    if (flo * fmid <= 0){
+      hi = mid;
+      fhi = fmid;
+    } else {
+      lo = mid;
+      flo = fmid;
+    }
+  }
+  return (lo + hi) / 2;
+}
 
-      <div class="btnrow mt">
-        <button id="btnApply" class="btn primary">계산</button>
-        <button id="btnCapex10" class="btn">투자비 +10%</button>
-        <button id="btnEnergyDown20" class="btn">절감 -20%</button>
-        <button id="btnTaxZero" class="btn">취득세 0</button>
-      </div>
+function paybackPeriod(cashflows){
+  // Undiscounted payback, with linear interpolation within the year.
+  let cum = 0;
+  if (cashflows.length === 0) return NaN;
+  if (cashflows[0] >= 0) return 0;
 
-      <p class="hint">
-        단위: 백만원. (IRR/NPV는 단순화된 현금흐름 모델 기반)
-      </p>
-    </section>
+  for (let t=0; t<cashflows.length; t++){
+    const prev = cum;
+    cum += cashflows[t];
+    if (cum >= 0){
+      const cf = cashflows[t];
+      if (t === 0) return 0;
+      // prev < 0, cum >= 0
+      const frac = (0 - prev) / cf; // 0..1
+      return (t - 1) + frac;
+    }
+  }
+  return NaN; // never pays back within horizon
+}
 
-    <!-- OUTPUT -->
-    <section class="card">
-      <h2>결과</h2>
+function discountedCashflows(rate, cashflows){
+  return cashflows.map((cf, t) => cf / Math.pow(1 + rate, t));
+}
 
-      <div class="kpis">
-        <div class="kpi">
-          <div class="kpiLabel">NPV (백만원)</div>
-          <div id="kpiNpv" class="kpiVal">-</div>
-        </div>
-        <div class="kpi">
-          <div class="kpiLabel">IRR (%)</div>
-          <div id="kpiIrr" class="kpiVal">-</div>
-        </div>
-        <div class="kpi">
-          <div class="kpiLabel">회수기간 (년)</div>
-          <div id="kpiPayback" class="kpiVal">-</div>
-        </div>
-        <div class="kpi">
-          <div class="kpiLabel">할인율 (%)</div>
-          <div id="kpiRate" class="kpiVal">-</div>
-        </div>
-      </div>
+// ===== Model =====
+function buildCashflows(params){
+  const {
+    capGeo, capInd, capPv,
+    benefitTax,
+    benefitEnergy,
+    years
+  } = params;
 
-      <div class="charts">
-        <div class="chartbox">
-          <h3>연도별 현금흐름 (할인 CF)</h3>
-          <canvas id="chartCf"></canvas>
-        </div>
-        <div class="chartbox">
-          <h3>누적 현금흐름 (할인 누적)</h3>
-          <canvas id="chartCum"></canvas>
-        </div>
-      </div>
+  const capex = capGeo + capInd + capPv;
 
-      <h3 class="mt">현금흐름 표</h3>
-      <div class="tablewrap">
-        <table id="cfTable">
-          <thead>
-            <tr>
-              <th>연도</th>
-              <th>CF</th>
-              <th>누적</th>
-              <th>할인CF</th>
-              <th>할인누적</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+  const cfs = [];
+  // t=0
+  cfs.push(-capex + benefitTax);
 
-  <footer class="footer">
-    <span>GitHub Pages 정적 웹 / Chart.js 사용</span>
-  </footer>
+  // t=1..years
+  for (let t=1; t<=years; t++){
+    cfs.push(benefitEnergy);
+  }
+  return cfs;
+}
 
-  <script src="app.js"></script>
-</body>
-</html>
+// ===== UI State =====
+const DEFAULTS = {
+  capGeo: 4314,
+  capInd: 2331,
+  capPv: 0,
+  benefitTax: 4818,      // 엑셀 값이 소수였는데 MVP는 반올림 기본
+  benefitEnergy: 337,
+  discountRatePct: 4.5,
+  years: 25,
+  baseYear: 2025
+};
+
+const $ = (id) => document.getElementById(id);
+
+function readInputs(){
+  return {
+    capGeo: Number($("capGeo").value) || 0,
+    capInd: Number($("capInd").value) || 0,
+    capPv: Number($("capPv").value) || 0,
+    benefitTax: Number($("benefitTax").value) || 0,
+    benefitEnergy: Number($("benefitEnergy").value) || 0,
+    discountRatePct: Number($("discountRate").value) || 0,
+    years: Math.max(1, Math.floor(Number($("years").value) || 1)),
+    baseYear: Math.floor(Number($("baseYear").value) || DEFAULTS.baseYear)
+  };
+}
+
+function writeInputs(v){
+  $("capGeo").value = v.capGeo;
+  $("capInd").value = v.capInd;
+  $("capPv").value = v.capPv;
+  $("benefitTax").value = v.benefitTax;
+  $("benefitEnergy").value = v.benefitEnergy;
+  $("discountRate").value = v.discountRatePct;
+  $("years").value = v.years;
+  $("baseYear").value = v.baseYear;
+}
+
+let chartCf = null;
+let chartCum = null;
+
+/**
+ * 차트는 "할인율이 반영된" 값으로 표시:
+ * - bar: 할인 CF (DCF)
+ * - line: 할인 누적 (Discounted cumulative)
+ */
+function renderCharts(yearLabels, dcf, dcum){
+  // Destroy if exists
+  if (chartCf) chartCf.destroy();
+  if (chartCum) chartCum.destroy();
+
+  const ctx1 = $("chartCf").getContext("2d");
+  const ctx2 = $("chartCum").getContext("2d");
+
+  chartCf = new Chart(ctx1, {
+    type: "bar",
+    data: {
+      labels: yearLabels,
+      datasets: [{
+        label: "할인 CF (백만원)",
+        data: dcf
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } }
+      }
+    }
+  });
+
+  chartCum = new Chart(ctx2, {
+    type: "line",
+    data: {
+      labels: yearLabels,
+      datasets: [{
+        label: "할인 누적 (백만원)",
+        data: dcum,
+        tension: 0.2,
+        pointRadius: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } }
+      }
+    }
+  });
+}
+
+function renderTable(yearLabels, cfs, cum, dcf, dcum){
+  const tbody = $("cfTable").querySelector("tbody");
+  tbody.innerHTML = "";
+  for (let i=0; i<yearLabels.length; i++){
+    const tr = document.createElement("tr");
+    const cells = [
+      yearLabels[i],
+      fmt(cfs[i], 2),
+      fmt(cum[i], 2),
+      fmt(dcf[i], 2),
+      fmt(dcum[i], 2)
+    ];
+    for (let j=0; j<cells.length; j++){
+      const td = document.createElement("td");
+      td.textContent = cells[j];
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function computeAndRender(){
+  const v = readInputs();
+  const r = v.discountRatePct / 100;
+
+  const cfs = buildCashflows({
+    capGeo: v.capGeo,
+    capInd: v.capInd,
+    capPv: v.capPv,
+    benefitTax: v.benefitTax,
+    benefitEnergy: v.benefitEnergy,
+    years: v.years
+  });
+
+  const yearLabels = [];
+  for (let t=0; t<cfs.length; t++){
+    yearLabels.push(String(v.baseYear + t));
+  }
+
+  // cumulative (nominal)
+  const cum = [];
+  let s = 0;
+  for (const cf of cfs){
+    s += cf;
+    cum.push(s);
+  }
+
+  // discounted
+  const dcf = discountedCashflows(r, cfs);
+  const dcum = [];
+  let sd = 0;
+  for (const x of dcf){
+    sd += x;
+    dcum.push(sd);
+  }
+
+  const npvVal = npv(r, cfs);
+  const irrVal = irr(cfs); // as decimal
+  const pb = paybackPeriod(cfs);
+
+  $("kpiNpv").textContent = fmt(npvVal, 2);
+  $("kpiIrr").textContent = isFinite(irrVal) ? fmt(irrVal * 100, 2) : "계산불가";
+  $("kpiPayback").textContent = isFinite(pb) ? fmt(pb, 2) : "미회수";
+  $("kpiRate").textContent = fmt(v.discountRatePct, 2);
+
+  // ✅ charts now use discounted series
+  renderCharts(yearLabels, dcf, dcum);
+
+  // table keeps both nominal + discounted
+  renderTable(yearLabels, cfs, cum, dcf, dcum);
+}
+
+// ===== Scenario save/load =====
+const STORAGE_KEY = "econ_mvp_scenario_v1";
+
+function saveScenario(){
+  const v = readInputs();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(v));
+  alert("저장 완료 (브라우저 LocalStorage)");
+}
+
+function loadScenario(){
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw){
+    alert("저장된 시나리오가 없습니다.");
+    return;
+  }
+  try{
+    const v = JSON.parse(raw);
+    writeInputs(v);
+    computeAndRender();
+  }catch{
+    alert("불러오기 실패(데이터 손상)");
+  }
+}
+
+function resetDefaults(){
+  writeInputs(DEFAULTS);
+  computeAndRender();
+}
+
+// ===== Sensitivity buttons =====
+function applyCapex10(){
+  const v = readInputs();
+  v.capGeo *= 1.10;
+  v.capInd *= 1.10;
+  v.capPv *= 1.10;
+  // round
+  v.capGeo = Math.round(v.capGeo);
+  v.capInd = Math.round(v.capInd);
+  v.capPv = Math.round(v.capPv);
+  writeInputs(v);
+  computeAndRender();
+}
+
+function applyEnergyDown20(){
+  const v = readInputs();
+  v.benefitEnergy = Math.round(v.benefitEnergy * 0.8);
+  writeInputs(v);
+  computeAndRender();
+}
+
+function applyTaxZero(){
+  const v = readInputs();
+  v.benefitTax = 0;
+  writeInputs(v);
+  computeAndRender();
+}
+
+// ===== Wire up =====
+document.addEventListener("DOMContentLoaded", () => {
+  // init inputs
+  resetDefaults();
+
+  $("btnApply").addEventListener("click", computeAndRender);
+  $("btnReset").addEventListener("click", resetDefaults);
+
+  $("btnSave").addEventListener("click", saveScenario);
+  $("btnLoad").addEventListener("click", loadScenario);
+
+  $("btnCapex10").addEventListener("click", applyCapex10);
+  $("btnEnergyDown20").addEventListener("click", applyEnergyDown20);
+  $("btnTaxZero").addEventListener("click", applyTaxZero);
+
+  // auto-calc on input change (optional)
+  ["capGeo","capInd","capPv","benefitTax","benefitEnergy","discountRate","years","baseYear"]
+    .forEach(id => $(id).addEventListener("change", computeAndRender));
+});
